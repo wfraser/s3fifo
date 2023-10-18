@@ -77,34 +77,28 @@ impl<K: PartialEq, V> S3Fifo<K, V> {
 
     fn evict_main(&mut self) {
         while let Some(tail) = self.main.pop_back() {
-            match tail.freq.fetch_sub(1, SeqCst) {
-                0 => {
-                    // value wrapped around after sub
-                    tail.freq.store(0, SeqCst);
-                    break;
-                },
-                1 => break,
-                2 ..= MAX_FREQ => {
-                    self.main.push_front(tail);
-                },
-                other => panic!("unexpected freq after subtraction: {other}"),
+            let n = tail.freq.load(SeqCst);
+            if n > 0 {
+                tail.freq.store(n - 1, SeqCst);
+                self.main.push_front(tail);
+            } else {
+                break;
             }
         }
     }
 
     fn evict_small(&mut self) {
-        while let Some(tail) = self.small.pop_back() {
+        if let Some(tail) = self.small.pop_back() {
             if tail.freq.load(SeqCst) > 1 {
                 if self.main.len() >= self.main_size {
                     self.evict_main();
                 }
                 self.main.push_front(tail);
             } else {
-                while self.ghost.len() >= self.main_size {
+                if self.ghost.len() >= self.main_size {
                     self.ghost.pop_back();
                 }
                 self.ghost.push_front(tail.key);
-                break;
             }
         }
     }
